@@ -1,0 +1,45 @@
+name: FilmMeter
+options:
+  bundleIdPrefix: com.colinmortimer
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  FilmMeter:
+    type: application
+    platform: iOS
+    sources:
+      - path: FilmMeter
+    info:
+      path: Config/Info.plist
+      properties:
+        CFBundleDisplayName: Film Meter
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.photography
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UIStatusBarHidden: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSCameraUsageDescription: Film Meter uses the camera to meter light and preview your film stock. Nothing is saved to your photo library.
+        NSLocationWhenInUseUsageDescription: Your location tells Film Meter where the sun is, for backlight detection and the polarizer preview. It stays on your phone.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.colinmortimer.filmmeter
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: NO
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO

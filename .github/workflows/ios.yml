@@ -1,0 +1,110 @@
+name: Build Film Meter
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      testflight:
+        description: "Upload this build to TestFlight"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      BUNDLE_ID: ${{ vars.BUNDLE_ID || 'com.colinmortimer.filmmeter' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pick Xcode
+        run: |
+          XC=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          echo "Using $XC"
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build (compile check, unsigned archive)
+        run: |
+          set -o pipefail
+          xcodebuild -project FilmMeter.xcodeproj -scheme FilmMeter -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath build/FilmMeter.xcarchive archive \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO 2>&1 | tee build.log | xcbeautify
+
+      - name: Save errors where Claude can read them
+        if: failure()
+        run: |
+          grep -E "error:|error\b|\*\* ARCHIVE FAILED|note: .*candidate" build.log | head -400 > errors.txt || true
+          mkdir -p /tmp/logs && cp build.log errors.txt /tmp/logs/ || true
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout --orphan ci-logs
+          git rm -rf --cached . > /dev/null 2>&1 || true
+          rm -rf logs && mkdir logs && cp /tmp/logs/* logs/
+          git add -f logs
+          git commit -m "Build log for run ${{ github.run_number }} (${{ github.sha }})"
+          git push -f origin ci-logs
+
+      - name: Package an unsigned IPA (for sideloading tools)
+        run: |
+          mkdir -p build/unsigned/Payload
+          cp -R build/FilmMeter.xcarchive/Products/Applications/FilmMeter.app build/unsigned/Payload/
+          (cd build/unsigned && zip -qr ../FilmMeter-unsigned.ipa Payload)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FilmMeter-unsigned-ipa
+          path: build/FilmMeter-unsigned.ipa
+          retention-days: 14
+
+      - name: Check for App Store Connect secrets
+        env:
+          A: ${{ secrets.ASC_KEY_ID }}
+          B: ${{ secrets.ASC_ISSUER_ID }}
+          C: ${{ secrets.ASC_KEY_P8 }}
+          D: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$A" ] && [ -n "$B" ] && [ -n "$C" ] && [ -n "$D" ]; then echo "HAS_ASC=true" >> "$GITHUB_ENV"; else echo "HAS_ASC=false" >> "$GITHUB_ENV"; echo "TestFlight secrets not set yet: skipping upload"; fi
+
+      - name: Sign and upload to TestFlight
+        if: ${{ (github.event_name == 'push' || inputs.testflight) && env.HAS_ASC == 'true' }}
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -o pipefail
+          KEY_PATH="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s' "$ASC_KEY_P8" > "$KEY_PATH"
+          if ! grep -q "BEGIN PRIVATE KEY" "$KEY_PATH"; then echo "$ASC_KEY_P8" | base64 --decode > "$KEY_PATH"; fi
+          cat > ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>testFlightInternalTestingOnly</key><true/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive -archivePath build/FilmMeter.xcarchive -exportOptionsPlist ExportOptions.plist \
+            -exportPath build/export -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            2>&1 | tee export.log
+          rm -f "$KEY_PATH"
