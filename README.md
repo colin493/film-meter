@@ -15,9 +15,29 @@ A light meter and film preview for iPhone, built for a Contax G2 and a Mamiya 6.
 - **Rolls.** Each camera holds its own roll with a frame count and log. The app shows the other camera's settings under the main reading. Saved compositions can be re-rendered later at any aperture or exposure.
 - **Stock advisor.** Opened from the Stocks button. It ranks stocks for the scene in front of you.
 
-## Put it on your iPhone without a Mac (TestFlight)
+## Free install with SideStore
 
-This path needs the Apple Developer Program ($99 a year). The app is built on GitHub's Macs.
+SideStore installs apps with a free Apple ID and re-signs them on the phone. Every push to `main` builds Film Meter on GitHub's Macs and publishes it to a feed that SideStore reads.
+
+Once:
+
+1. Install SideStore on the phone with iloader (iloader.app). That needs a Mac, or an Intel or AMD Windows PC with iTunes. Windows on ARM can't see an iPhone over USB, so there it needs the experimental WSL route.
+2. On the phone, turn on Developer Mode under Settings, Privacy & Security. Then trust your Apple ID under Settings, General, VPN & Device Management.
+3. Install LocalDevVPN from the App Store and connect it.
+4. Open SideStore and sign in with the same Apple ID.
+5. In SideStore, open Sources, tap +, and add `https://raw.githubusercontent.com/colin493/film-meter/sidestore/source.json`. Install Film Meter from that source.
+
+After that:
+
+- New builds show up as updates inside SideStore.
+- Tap Refresh in SideStore at least once every 7 days, with LocalDevVPN connected, or the app stops opening.
+- A free Apple ID can hold 3 sideloaded apps at once, and SideStore counts as one.
+
+Each build is also attached to a GitHub release. The ten newest are kept.
+
+## TestFlight instead ($99 a year)
+
+This path needs the Apple Developer Program. It needs no computer at all, and builds last 90 days instead of 7.
 
 1. **Enroll** at developer.apple.com/programs/enroll with your Apple ID. Approval can take up to 48 hours.
 2. **Register the app ID.** Go to developer.apple.com/account and open Certificates, Identifiers & Profiles, then Identifiers. Press +, choose App IDs and then App. Enter the explicit bundle ID `com.colinmortimer.filmmeter`. No capabilities are needed.
@@ -32,8 +52,6 @@ This path needs the Apple Developer Program ($99 a year). The app is built on Gi
    If you used a different bundle ID, also add a repository **variable** named `BUNDLE_ID`.
 6. **Build.** Open Actions, choose Build Film Meter, then Run workflow. The build takes about 10 minutes, and Apple then processes it for another 5 to 30.
 7. **Install.** Install Apple's TestFlight app on the iPhone. In App Store Connect, open your app, then TestFlight, then Internal Testing. Create a group, add yourself, and add the build. It then appears in TestFlight on the phone. Each build lasts 90 days, and every push to `main` makes a new one.
-
-Every run also saves an unsigned `.ipa` as a build artifact, for sideloading tools if you ever want that route.
 
 ## With a Mac instead
 
@@ -63,4 +81,5 @@ Run `brew install xcodegen && xcodegen generate`, then open `FilmMeter.xcodeproj
 - `FilmMeter/Camera`: capture session, depth, bracketing, frame analysis, Camera Control
 - `FilmMeter/Render`: live preview, locked-frame rendering, grain
 - `FilmMeter/UI`: SwiftUI screens
-- `.github/workflows/ios.yml`: cloud build and TestFlight upload
+- `.github/workflows/ios.yml`: cloud build, SideStore feed and TestFlight upload
+- `scripts/sidestore_source.py`: writes the SideStore feed from the built app

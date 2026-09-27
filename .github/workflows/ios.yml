@@ -13,60 +13,103 @@ on:
 permissions:
   contents: write
 
+# A newer push replaces a build that is still running.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: macos-26
     timeout-minutes: 45
     env:
       BUNDLE_ID: ${{ vars.BUNDLE_ID || 'com.colinmortimer.filmmeter' }}
+      APP_VERSION: 0.1.${{ github.run_number }}
+      BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Pick Xcode
         run: |
-          XC=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          XC=$(ls -d /Applications/Xcode_26*.app | grep -v -i beta | sort -V | tail -1)
+          if [ -z "$XC" ]; then XC=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1); fi
           echo "Using $XC"
           sudo xcode-select -s "$XC"
           xcodebuild -version
 
       - name: Generate the Xcode project
         run: |
+          set -o pipefail
           brew install xcodegen
-          xcodegen generate
+          xcodegen generate 2>&1 | tee xcodegen.log
 
       - name: Build (compile check, unsigned archive)
         run: |
           set -o pipefail
           xcodebuild -project FilmMeter.xcodeproj -scheme FilmMeter -configuration Release \
             -destination 'generic/platform=iOS' -archivePath build/FilmMeter.xcarchive archive \
-            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO 2>&1 | tee build.log | xcbeautify
 
       - name: Save errors where Claude can read them
         if: failure()
         run: |
-          grep -E "error:|error\b|\*\* ARCHIVE FAILED|note: .*candidate" build.log | head -400 > errors.txt || true
-          mkdir -p /tmp/logs && cp build.log errors.txt /tmp/logs/ || true
+          mkdir -p /tmp/logs
+          cp build.log xcodegen.log /tmp/logs/ 2>/dev/null || true
+          grep -n -E ": error:|^error:|\*\* ARCHIVE FAILED \*\*|The following build commands failed" -A4 build.log | head -800 > /tmp/logs/errors.txt 2>/dev/null || true
           git config user.name "ci"
           git config user.email "ci@users.noreply.github.com"
           git checkout --orphan ci-logs
           git rm -rf --cached . > /dev/null 2>&1 || true
-          rm -rf logs && mkdir logs && cp /tmp/logs/* logs/
+          rm -rf logs && mkdir logs && cp /tmp/logs/* logs/ 2>/dev/null || true
           git add -f logs
           git commit -m "Build log for run ${{ github.run_number }} (${{ github.sha }})"
           git push -f origin ci-logs
 
-      - name: Package an unsigned IPA (for sideloading tools)
+      - name: Package the IPA for sideloading
         run: |
-          mkdir -p build/unsigned/Payload
-          cp -R build/FilmMeter.xcarchive/Products/Applications/FilmMeter.app build/unsigned/Payload/
-          (cd build/unsigned && zip -qr ../FilmMeter-unsigned.ipa Payload)
+          rm -rf build/sideload && mkdir -p build/sideload/Payload
+          cp -R build/FilmMeter.xcarchive/Products/Applications/FilmMeter.app build/sideload/Payload/
+          # Ad-hoc signature so any sideloading tool accepts it. SideStore re-signs it with your Apple ID.
+          codesign --force --sign - --timestamp=none build/sideload/Payload/FilmMeter.app
+          (cd build/sideload && zip -qry ../FilmMeter.ipa Payload)
+          ls -l build/FilmMeter.ipa
 
       - uses: actions/upload-artifact@v4
         with:
-          name: FilmMeter-unsigned-ipa
-          path: build/FilmMeter-unsigned.ipa
+          name: FilmMeter-ipa
+          path: build/FilmMeter.ipa
           retention-days: 14
+
+      - name: Publish the build for SideStore
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="build-${BUILD_NUMBER}"
+          NOTES=$(git log -1 --pretty=%s)
+          gh release delete "$TAG" --cleanup-tag --yes > /dev/null 2>&1 || true
+          gh release create "$TAG" build/FilmMeter.ipa --target "$GITHUB_SHA" \
+            --title "Film Meter ${APP_VERSION}" --notes "$NOTES"
+          python3 scripts/sidestore_source.py --app build/sideload/Payload/FilmMeter.app --ipa build/FilmMeter.ipa \
+            --download-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/FilmMeter.ipa" \
+            --repo "$GITHUB_REPOSITORY" --notes "$NOTES" --out "$RUNNER_TEMP/source.json"
+          # The source lives alone on the sidestore branch, so its URL never changes.
+          SRC="$RUNNER_TEMP/sidestore"
+          rm -rf "$SRC" && mkdir -p "$SRC" && cp "$RUNNER_TEMP/source.json" "$SRC/"
+          (
+            cd "$SRC"
+            git init -q -b sidestore
+            git add source.json
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -qm "Film Meter ${APP_VERSION}"
+            git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" sidestore
+          )
+          # Keep the ten newest builds.
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[10:] | .[].tagName' |
+            while read -r t; do gh release delete "$t" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes; done
 
       - name: Check for App Store Connect secrets
         env:
@@ -75,7 +118,7 @@ jobs:
           C: ${{ secrets.ASC_KEY_P8 }}
           D: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [ -n "$A" ] && [ -n "$B" ] && [ -n "$C" ] && [ -n "$D" ]; then echo "HAS_ASC=true" >> "$GITHUB_ENV"; else echo "HAS_ASC=false" >> "$GITHUB_ENV"; echo "TestFlight secrets not set yet: skipping upload"; fi
+          if [ -n "$A" ] && [ -n "$B" ] && [ -n "$C" ] && [ -n "$D" ]; then echo "HAS_ASC=true" >> "$GITHUB_ENV"; else echo "HAS_ASC=false" >> "$GITHUB_ENV"; echo "TestFlight secrets not set: skipping upload"; fi
 
       - name: Sign and upload to TestFlight
         if: ${{ (github.event_name == 'push' || inputs.testflight) && env.HAS_ASC == 'true' }}
