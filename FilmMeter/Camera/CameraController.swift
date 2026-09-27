@@ -93,7 +93,7 @@ final class CameraController: NSObject, ObservableObject {
 
         session.beginConfiguration()
         session.sessionPreset = .inputPriority
-        session.automaticallyConfiguresCaptureDeviceWideColor = false
+        session.automaticallyConfiguresCaptureDeviceForWideColor = false
         do {
             let input = try AVCaptureDeviceInput(device: device)
             if session.canAddInput(input) { session.addInput(input) }
