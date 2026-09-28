@@ -165,7 +165,7 @@ enum Meter {
                     if thirds > 0 {
                         placement -= Double(thirds) / 3
                         totalThirds += thirds
-                        why.append("holds shadow detail, since \(st.name) has highlight room to spare")
+                        why.append("holds shadow detail")
                     }
                 } else {
                     // Slide film: give up shadows to keep highlights.
@@ -176,7 +176,7 @@ enum Meter {
                     if thirds > 0 {
                         placement += Double(thirds) / 3
                         totalThirds -= thirds
-                        why.append("protects the highlights, which \(st.name) clips early")
+                        why.append("protects the highlights")
                     }
                 }
             } else {
