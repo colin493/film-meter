@@ -6,7 +6,7 @@ A light meter and film preview for iPhone, built for a Contax G2 and a Mamiya 6.
 
 - **Live film preview.** The view is cropped to the lens and format you pick, and rendered through the stock's latitude and your own look. That look was fitted to your Negative Lab Pro conversions, with greens pulled away from yellow.
 - **Metering.** Modes are M, Av and Tv. Metering is either Subject (tap to meter, then place the subject on a zone) or Matrix. Matrix reads the whole scene: it detects faces, backlight from the sun's position, snow and night. It then shifts exposure to fit the stock's latitude. Everything runs on the phone with no network.
-- **Stocks.** 24 are built in, with reciprocity from the manufacturers' data sheets (Settings lists each source). Push and pull are set per roll.
+- **Stocks.** 24 are built in, with reciprocity from the manufacturers' data sheets (each source is in `FilmMeter/Model/Film.swift`). Push and pull are set per roll. With no roll loaded, the Rolls screen picks a preview stock or no film simulation.
 - **Filters.** Filters stack and their factors are compensated automatically. The polarizer is simulated on blue sky from the sun's position and the way you're pointing the phone. It assumes the dot sits at the top.
 - **Locked frames.** Tap the lock button, press the Camera Control button, or long-press the viewfinder. The app grabs a three-shot bracket and merges it. The locked frame then shows:
   - red stripes where highlights pass the stock's limit and blue stripes where shadows fall off
