@@ -1,0 +1,50 @@
+{
+  "name": "Film Meter",
+  "identifier": "com.colinmortimer.filmmeter.source",
+  "subtitle": "Builds of Film Meter",
+  "description": "Every build of Film Meter from GitHub, newest first.",
+  "iconURL": "https://raw.githubusercontent.com/colin493/film-meter/main/FilmMeter/Resources/Assets.xcassets/AppIcon.appiconset/icon.png",
+  "website": "https://github.com/colin493/film-meter",
+  "tintColor": "D67834",
+  "featuredApps": [
+    "com.colinmortimer.filmmeter"
+  ],
+  "apps": [
+    {
+      "name": "Film Meter",
+      "bundleIdentifier": "com.colinmortimer.filmmeter",
+      "developerName": "Colin Mortimer",
+      "subtitle": "Film light meter and preview",
+      "localizedDescription": "Meters for the film you have loaded and previews it through that stock's latitude and your own look. Built for a Contax G2 and a Mamiya 6.",
+      "iconURL": "https://raw.githubusercontent.com/colin493/film-meter/main/FilmMeter/Resources/Assets.xcassets/AppIcon.appiconset/icon.png",
+      "tintColor": "D67834",
+      "category": "photo-video",
+      "screenshots": [],
+      "versions": [
+        {
+          "version": "0.1.6",
+          "buildVersion": "6",
+          "date": "2026-09-28T09:25:18Z",
+          "localizedDescription": "Shorter reason: drop the stock explanation",
+          "downloadURL": "https://github.com/colin493/film-meter/releases/download/build-6/FilmMeter.ipa",
+          "size": 707617,
+          "sha256": "74b6025273f0aa7b6022469c3c5ff627f807936f4424df6f888cb92ae136b5b0",
+          "minOSVersion": "18.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSCameraUsageDescription": "Film Meter uses the camera to meter light and preview your film stock. Nothing is saved to your photo library.",
+          "NSLocationWhenInUseUsageDescription": "Your location tells Film Meter where the sun is, for backlight detection and the polarizer preview. It stays on your phone."
+        }
+      },
+      "version": "0.1.6",
+      "versionDate": "2026-09-28T09:25:18Z",
+      "versionDescription": "Shorter reason: drop the stock explanation",
+      "downloadURL": "https://github.com/colin493/film-meter/releases/download/build-6/FilmMeter.ipa",
+      "size": 707617
+    }
+  ],
+  "news": []
+}
