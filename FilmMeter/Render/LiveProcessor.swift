@@ -17,6 +17,8 @@ struct LiveConfig {
     var polarizerAxis: Float?        // nil when no polarizer is mounted
     var tanHalfWidth: Double = 0.4
     var tanHalfHeight: Double = 0.6
+    /// Zoom the phone couldn't do optically (it limits zoom while streaming depth), applied as a centre crop.
+    var digitalZoom: Double = 1
 }
 
 /// Receives camera frames, measures them, and renders the film preview.
@@ -47,15 +49,14 @@ final class LiveProcessor: CameraFrameSink {
 
     private func currentConfig() -> LiveConfig { lock.lock(); defer { lock.unlock() }; return config }
 
-    /// Framed area in upright normalized coordinates for a given upright image aspect.
-    static func cropRect(imageAspect a: Double, target t: Double) -> CGRect {
-        if t < a {
-            let w = t / a
-            return CGRect(x: (1 - w) / 2, y: 0, width: w, height: 1)
-        } else {
-            let h = a / t
-            return CGRect(x: 0, y: (1 - h) / 2, width: 1, height: h)
-        }
+    /// Framed area in upright normalized coordinates for a given upright image aspect,
+    /// narrowed around the centre by any zoom the phone couldn't do itself.
+    static func cropRect(imageAspect a: Double, target t: Double, zoom: Double = 1) -> CGRect {
+        var w = 1.0, h = 1.0
+        if t < a { w = t / a } else { h = a / t }
+        let z = max(1, zoom)
+        w /= z; h /= z
+        return CGRect(x: (1 - w) / 2, y: (1 - h) / 2, width: w, height: h)
     }
 
     func camera(didOutput pixelBuffer: CVPixelBuffer, depth: AVDepthData?, exposure: PhoneExposure, time: CMTime) {
@@ -64,7 +65,7 @@ final class LiveProcessor: CameraFrameSink {
         let map = OrientationMap(cfg.display)
         let w = Double(CVPixelBufferGetWidth(pixelBuffer)), h = Double(CVPixelBufferGetHeight(pixelBuffer))
         let uprightAspect = map.swapsAxes ? h / w : w / h
-        let crop = LiveProcessor.cropRect(imageAspect: uprightAspect, target: cfg.cropAspect)
+        let crop = LiveProcessor.cropRect(imageAspect: uprightAspect, target: cfg.cropAspect, zoom: cfg.digitalZoom)
 
         // Measure every other frame.
         if frameCount % 2 == 0 {
@@ -104,10 +105,12 @@ final class LiveProcessor: CameraFrameSink {
             var look = cfg.look
             let k = cfg.placementEV.map { Float(exposure.ev100 + cfg.calibration - $0) } ?? 0
             look.k = (k * 3).rounded() / 3
+            // One range for all three channels keeps the phone's white balance. Levelling each channel on its
+            // own swings the colour with whatever happens to be brightest or darkest in the frame.
             if look.mode == .bwNegative {
                 look.lo = SIMD3(repeating: stats.loY); look.hi = SIMD3(repeating: stats.hiY)
             } else {
-                look.lo = stats.lo; look.hi = stats.hi
+                look.lo = SIMD3(repeating: stats.loL); look.hi = SIMD3(repeating: stats.hiL)
             }
             requestCube(look)
             if let c = currentCube() {

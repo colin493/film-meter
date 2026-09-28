@@ -5,7 +5,6 @@ import UIKit
 
 struct AppSettings: Codable, Equatable {
     var calibrationThirds: Int = 0
-    var greensShift: Double = 0
     var houseLook: Bool = true
     var showGrain: Bool = true
     var useFeet: Bool = true
@@ -37,13 +36,21 @@ enum ActiveSheet: String, Identifiable {
 }
 
 final class AppModel: ObservableObject {
-    @Published var cameras: [CameraBody] { didSet { saveLibrary() } }
+    @Published var cameras: [CameraBody] {
+        didSet {
+            saveLibrary()
+            // A lens edited in Gear (or a new preview stock) should show straight away.
+            if oldValue != cameras { updateZoom() }
+        }
+    }
     @Published var filters: [FilterDef] { didSet { saveLibrary() } }
     @Published var rolls: [Roll] { didSet { Store.save(rolls, "rolls.json") } }
     @Published var settings: AppSettings {
         didSet {
             Store.save(settings, "settings.json")
-            if oldValue.greensShift != settings.greensShift { LookTables.shared.setGreensShift(Float(settings.greensShift)) }
+            if oldValue.metering != settings.metering || oldValue.activeCameraID != settings.activeCameraID {
+                resetMeter()
+            }
             refresh()
         }
     }
@@ -61,6 +68,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var zoomNote: String?
     @Published private(set) var isLocking = false
     @Published var toast: String?
+    /// Zoom still needed after the phone's own zoom, applied as a centre crop.
+    @Published private(set) var digitalZoom: Double = 1
+    /// What the phone camera reported, for the diagnostics in Settings.
+    @Published private(set) var zoomStatus = ""
 
     let camera = CameraController()
     let motion = MotionLocation()
@@ -68,6 +79,10 @@ final class AppModel: ObservableObject {
     private let captureControls = CaptureControls()
     private var cancellables = Set<AnyCancellable>()
     private var lastStatsPublish = Date.distantPast
+    private let stabilizer = MeterStabilizer()
+    private var meterMemory = MeterMemory()
+    /// Smoothed statistics the meter reads (the raw ones in `stats` drive the overlays).
+    private var meterStats: FrameStats?
 
     init() {
         let lib = Store.load(Library.self, "library.json")
@@ -75,7 +90,6 @@ final class AppModel: ObservableObject {
         filters = lib?.filters ?? GearDefaults.filters()
         rolls = Store.load([Roll].self, "rolls.json") ?? []
         settings = Store.load(AppSettings.self, "settings.json") ?? AppSettings()
-        LookTables.shared.setGreensShift(Float(settings.greensShift))
         compositions = Store.listCompositions()
         processor.motion = motion
         camera.sink = processor
@@ -157,7 +171,7 @@ final class AppModel: ObservableObject {
         case .portraitUpsideDown: d = .portraitUpsideDown
         default: d = .portrait
         }
-        if d != display { display = d; refresh() }
+        if d != display { display = d; resetMeter(); refresh() }
     }
 
     /// Match the phone's view to the lens on this format.
@@ -169,7 +183,14 @@ final class AppModel: ObservableObject {
         if fmt.aspect >= 4.0 / 3.0 { zoom = tanH * 2 * lens.focalLength / fmt.size.long }
         else { zoom = tanH * 0.75 * 2 * lens.focalLength / fmt.size.short }
         zoomNote = zoom < 0.98 ? "The \(Int(lens.focalLength))mm sees wider than this phone camera" : nil
-        camera.setZoom(max(1, zoom))
+        let want = max(1, zoom)
+        camera.setZoom(want) { [weak self] applied, maxZoom in
+            guard let self else { return }
+            // The phone caps zoom while it streams depth; crop whatever it couldn't do.
+            self.digitalZoom = max(1, want / max(1, applied))
+            self.zoomStatus = String(format: "Lens needs %.2f×, phone zoom %.2f× (max %.2f×), crop %.2f×", want, applied, maxZoom, self.digitalZoom)
+            self.pushConfig()
+        }
         refresh()
     }
 
@@ -195,6 +216,7 @@ final class AppModel: ObservableObject {
     func selectLens(_ id: UUID) {
         guard let i = cameras.firstIndex(where: { $0.id == activeCamera.id }) else { return }
         cameras[i].selectedLensID = id
+        resetMeter()
         updateZoom()
         installCaptureControls()
     }
@@ -219,7 +241,15 @@ final class AppModel: ObservableObject {
         if Date().timeIntervalSince(lastStatsPublish) < 0.09 { return }
         lastStatsPublish = Date()
         stats = s
-        refresh()
+        meterStats = stabilizer.update(s)
+        refresh(newFrame: true)
+    }
+
+    /// Start the meter fresh: new camera, lens, orientation or metering mode.
+    private func resetMeter() {
+        stabilizer.reset()
+        meterMemory.reset()
+        meterStats = stats
     }
 
     /// The framed area within the full upright camera image (normalized).
@@ -230,11 +260,13 @@ final class AppModel: ObservableObject {
             let dims = CMVideoFormatDescriptionGetDimensions(d.activeFormat.formatDescription)
             if dims.width > 0 && dims.height > 0 { w = Double(dims.width); h = Double(dims.height) }
         }
-        return LiveProcessor.cropRect(imageAspect: map.swapsAxes ? h / w : w / h, target: cropAspect)
+        return LiveProcessor.cropRect(imageAspect: map.swapsAxes ? h / w : w / h, target: cropAspect, zoom: digitalZoom)
     }
 
     func tapSubject(_ p: CGPoint) {
         subjectPoint = p
+        stabilizer.resetSubject()
+        meterMemory.placementThirds = nil
         if settings.metering != .subject { settings.metering = .subject }
         // Framed point → upright image point → sensor point for the phone's own metering.
         let crop = uprightCrop
@@ -245,17 +277,20 @@ final class AppModel: ObservableObject {
 
     func clearSubject() {
         subjectPoint = nil
+        stabilizer.resetSubject()
+        meterMemory.placementThirds = nil
         camera.meter(at: nil)
         refresh()
     }
 
-    func refresh() {
+    func refresh(newFrame: Bool = false) {
         let cam = activeCamera
         let st = stock(for: cam)
-        if let s = stats {
+        if let s = meterStats {
             let result = Meter.evaluate(stats: s, mode: settings.metering, zone: settings.subjectZone, stock: st,
                                         pushStops: push(for: cam), calibration: calibration, sun: motion.sun(),
-                                        attitude: motion.attitude, display: display)
+                                        attitude: motion.attitude, display: display,
+                                        memory: &meterMemory, newFrame: newFrame)
             meterResult = result
             reading = solve(for: cam, placementEV: result.placementEV, primary: true)
             if let otherCam = cameras.first(where: { $0.id != cam.id }), let r = solve(for: otherCam, placementEV: result.placementEV, primary: false) {
@@ -302,6 +337,7 @@ final class AppModel: ObservableObject {
         c.polarizerAxis = pol ? PolarizerAxis.angle(format: cam.format, orientation: display) : nil
         let t = framedTangents
         c.tanHalfWidth = t.w; c.tanHalfHeight = t.h
+        c.digitalZoom = digitalZoom
         processor.update(c)
     }
 
@@ -322,6 +358,11 @@ final class AppModel: ObservableObject {
 
     func finishRoll(_ id: UUID) {
         if let i = rolls.firstIndex(where: { $0.id == id }) { rolls[i].finishedAt = Date() }
+        refresh()
+    }
+
+    func deleteRoll(_ id: UUID) {
+        rolls.removeAll { $0.id == id }
         refresh()
     }
 
@@ -357,6 +398,7 @@ final class AppModel: ObservableObject {
         let fl = activeFilters(for: cam)
         let display = self.display
         let aspect = cropAspect
+        let zoom = digitalZoom
         let tangents = framedTangents
         let subject = subjectPoint
         let sun = motion.sun()
@@ -370,7 +412,7 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             guard let capture else { self.isLocking = false; self.toast = "Couldn't lock the frame"; return }
             DispatchQueue.global(qos: .userInitiated).async {
-                guard let built = StillBuilder.build(capture: capture, display: display, cropAspect: aspect) else {
+                guard let built = StillBuilder.build(capture: capture, display: display, cropAspect: aspect, zoom: zoom) else {
                     DispatchQueue.main.async { self.isLocking = false; self.toast = "Couldn't lock the frame" }
                     return
                 }

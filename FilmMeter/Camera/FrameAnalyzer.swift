@@ -53,6 +53,9 @@ struct FrameStats {
     var hi = SIMD3<Float>(3, 3, 3)
     var loY: Float = -4
     var hiY: Float = 3
+    /// Luminance 0.5 / 99.5 percentiles (with filter colour), used to level colour film on all channels at once.
+    var loL: Float = -4
+    var hiL: Float = 3
     /// Luminance exposure percentiles (stops re: 18% grey at the phone's exposure).
     var p1: Float = -4, p5: Float = -3, p50: Float = 0, p95: Float = 2, p99: Float = 2.5, p995: Float = 2.7
     var logAverage: Float = 0
@@ -114,8 +117,9 @@ final class FrameAnalyzer {
         let cw = x1 - x0, ch = y1 - y0
 
         var eY = [Float](); eY.reserveCapacity(cw * ch)
-        var eR = [Float](), eG = [Float](), eB = [Float](), eW = [Float]()
+        var eR = [Float](), eG = [Float](), eB = [Float](), eW = [Float](), eL = [Float]()
         eR.reserveCapacity(cw * ch); eG.reserveCapacity(cw * ch); eB.reserveCapacity(cw * ch); eW.reserveCapacity(cw * ch)
+        eL.reserveCapacity(cw * ch)
         var thumb = [SIMD3<Float>](repeating: .zero, count: cw * ch)
         var sumLog: Float = 0, sumW: Float = 0, sumWLog: Float = 0
         var clipped = 0, sky = 0, skyN = 0, brightNeutral = 0
@@ -138,6 +142,7 @@ final class FrameAnalyzer {
                 eG.append(log2f(max(1e-5, lin.y) / 0.18) + gl.y)
                 eB.append(log2f(max(1e-5, lin.z) / 0.18) + gl.z)
                 eW.append(log2f(max(1e-5, simd_dot(config.bwWeights, lin * config.gains)) / 0.18))
+                eL.append(log2f(max(1e-5, ColorMath.luminance(lin * config.gains)) / 0.18))
                 sumLog += e
                 let nx = (Float(ux - x0) + 0.5) / Float(cw) - 0.5, ny = (Float(uy - y0) + 0.5) / Float(ch) - 0.5
                 let w = expf(-(nx * nx + ny * ny) / 0.08)
@@ -164,6 +169,8 @@ final class FrameAnalyzer {
         let r = pct(&eR, [0.005, 0.995]), g = pct(&eG, [0.005, 0.995]), b = pct(&eB, [0.005, 0.995]), wq = pct(&eW, [0.005, 0.995])
         stats.lo = SIMD3(r[0], g[0], b[0]); stats.hi = SIMD3(r[1], g[1], b[1])
         stats.loY = wq[0]; stats.hiY = wq[1]
+        let lq = pct(&eL, [0.005, 0.995])
+        stats.loL = lq[0]; stats.hiL = lq[1]
         stats.logAverage = sumLog / Float(n)
         stats.centerWeighted = sumW > 0 ? sumWLog / sumW : stats.logAverage
         stats.clipped = Float(clipped) / Float(n)

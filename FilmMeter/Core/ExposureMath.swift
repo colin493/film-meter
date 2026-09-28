@@ -75,7 +75,16 @@ enum ExposureMath {
         return sign + "\(whole)" + fracStr
     }
 
-    static func formatEV(_ ev: Double) -> String { String(format: "EV %.1f", ev) }
+    static func formatEV(_ ev: Double) -> String {
+        let v = (ev * 10).rounded() / 10
+        return String(format: "EV %.1f", v == 0 ? 0 : v)   // never "EV -0.0"
+    }
+
+    /// Nearest standard third-stop shutter speed, for times that should read like a camera's dial.
+    static func nominalShutter(_ t: Double) -> Double {
+        guard let last = thirdShutters.last, t <= last * 1.12 else { return t }
+        return nearest(t, in: thirdShutters)
+    }
 
     static func formatDistance(_ m: Double, feet: Bool) -> String {
         if !m.isFinite || m > 999 { return "∞" }

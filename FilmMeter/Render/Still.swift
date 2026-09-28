@@ -42,13 +42,13 @@ enum StillBuilder {
     static let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
 
     /// Merge the bracket into one linear image in the framed, upright view.
-    static func build(capture: BracketCapture, display: DisplayOrientation, cropAspect: Double, longEdge: Int = 1440)
+    static func build(capture: BracketCapture, display: DisplayOrientation, cropAspect: Double, zoom: Double = 1, longEdge: Int = 1440)
         -> (linear: [Float], width: Int, height: Int, depth: [Float]?, depthWidth: Int, depthHeight: Int)? {
         guard let first = capture.frames.first else { return nil }
         let map = OrientationMap(display)
         let bw = Double(CVPixelBufferGetWidth(first.buffer)), bh = Double(CVPixelBufferGetHeight(first.buffer))
         let uprightAspect = map.swapsAxes ? bh / bw : bw / bh
-        let crop = LiveProcessor.cropRect(imageAspect: uprightAspect, target: cropAspect)
+        let crop = LiveProcessor.cropRect(imageAspect: uprightAspect, target: cropAspect, zoom: zoom)
         let upW = map.swapsAxes ? bh : bw, upH = map.swapsAxes ? bw : bh
         let cropW = crop.width * upW, cropH = crop.height * upH
         let scale = Double(longEdge) / max(cropW, cropH)
@@ -190,7 +190,7 @@ final class StillRenderer {
         var look = p.look
         look.k = k
         var s = [Float](repeating: 1, count: n * 4)
-        var sampR = [Float](), sampG = [Float](), sampB = [Float](), sampW = [Float]()
+        var sampW = [Float]()
         let stride = max(1, n / 20000)
         var hiClip = 0, loClip = 0
         var zebra = [UInt8](repeating: 0, count: n * 4)
@@ -201,9 +201,7 @@ final class StillRenderer {
                 s[i * 4] = FilmPipeline.logEncode(x.x); s[i * 4 + 1] = FilmPipeline.logEncode(x.y); s[i * 4 + 2] = FilmPipeline.logEncode(x.z)
                 let wv = look.mode == .bwNegative ? simd_dot(look.bwWeights, x) : ColorMath.luminance(x)
                 let ey = log2f(max(1e-7, wv) / 0.18)
-                if i % stride == 0 {
-                    sampR.append(log2f(x.x / 0.18)); sampG.append(log2f(x.y / 0.18)); sampB.append(log2f(x.z / 0.18)); sampW.append(ey)
-                }
+                if i % stride == 0 { sampW.append(ey) }
                 if showZ {
                     let e = ey + k
                     let px = i % W, py = i / W
@@ -222,13 +220,11 @@ final class StillRenderer {
             a.sort()
             return a[min(a.count - 1, max(0, Int(Float(a.count - 1) * q)))]
         }
-        if look.mode == .bwNegative {
-            let lo = pct(&sampW, 0.001), hi = pct(&sampW, 0.999)
-            look.lo = SIMD3(repeating: lo); look.hi = SIMD3(repeating: hi)
-        } else {
-            look.lo = SIMD3(pct(&sampR, 0.001), pct(&sampG, 0.001), pct(&sampB, 0.001))
-            look.hi = SIMD3(pct(&sampR, 0.999), pct(&sampG, 0.999), pct(&sampB, 0.999))
-        }
+        // One range for all channels (luminance for colour, the stock's weights for B&W). This keeps the
+        // phone's white balance: levelling channels separately tinted the frame with whatever light
+        // source happened to be brightest, once the bracket recovered its real colour.
+        let lo = pct(&sampW, 0.001), hi = pct(&sampW, 0.999)
+        look.lo = SIMD3(repeating: lo); look.hi = SIMD3(repeating: hi)
 
         // 4. Film look via a composite cube on the GPU.
         let cube = FilmPipeline.buildCube(size: 41, input: .logEncoded, look: look)

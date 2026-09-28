@@ -19,18 +19,12 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("Your look (fitted to your scans)", isOn: $model.settings.houseLook)
-                    VStack(alignment: .leading) {
-                        Text("Greens: \(model.settings.greensShift == 0 ? "as tuned" : String(format: "%+.0f°", model.settings.greensShift))")
-                        Slider(value: $model.settings.greensShift, in: -15...15, step: 1) {
-                            Text("Greens")
-                        } minimumValueLabel: { Text("Yellower").font(.caption2) } maximumValueLabel: { Text("Cooler").font(.caption2) }
-                    }
                     Toggle("Grain", isOn: $model.settings.showGrain)
                     Toggle("Clipping stripes on locked frames", isOn: $model.settings.zebras)
                 } header: {
                     Text("Preview")
                 } footer: {
-                    Text("Greens are already shifted away from yellow; this slider fine-tunes from there.")
+                    Text("Your look renders greens away from yellow, as you asked.")
                 }
 
                 Section("Without film simulation") {
@@ -49,6 +43,18 @@ struct SettingsView: View {
 
                 Section("Gear") {
                     Button("Cameras, lenses and filters") { model.sheet = .gear }
+                }
+
+                Section {
+                    Text(model.camera.formatSummary.isEmpty ? "Camera not started" : model.camera.formatSummary)
+                        .font(.caption).foregroundStyle(Theme.dim)
+                    if !model.zoomStatus.isEmpty {
+                        Text(model.zoomStatus).font(.caption).foregroundStyle(Theme.dim)
+                    }
+                } header: {
+                    Text("Camera details")
+                } footer: {
+                    Text("Send Claude a screenshot of this if the framing or depth looks wrong.")
                 }
 
                 Section("Stock data") {

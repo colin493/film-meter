@@ -95,7 +95,8 @@ struct TopBar: View {
                     if let r = roll {
                         Chip(icon: "film", text: "\(shortStock(r.stock?.name)) · \(r.frames.count)/\(r.capacity)")
                     } else {
-                        Chip(icon: "film", text: "No roll · \(shortStock(model.stock(for: cam)?.name ?? "No stock"))")
+                        // No roll loaded: the eye marks a preview stock.
+                        Chip(icon: "eye", text: shortStock(model.stock(for: cam)?.name ?? "No film sim"))
                     }
                 }
                 Spacer(minLength: 0)

@@ -42,6 +42,8 @@ final class CameraController: NSObject, ObservableObject {
     @Published private(set) var deviceName = ""
     @Published private(set) var horizontalFOV: Double = 70
     @Published private(set) var errorMessage: String?
+    /// Camera, video format and depth format in use, for the diagnostics in Settings.
+    @Published private(set) var formatSummary = ""
 
     // Bracket state (touched only on videoQueue)
     private enum BracketStep { case idle, base, waitUnder(CMTime?, Double), waitOver(CMTime?, Double) }
@@ -51,6 +53,9 @@ final class CameraController: NSObject, ObservableObject {
     private var bracketBase: PhoneExposure?
     private var bracketCompletion: ((BracketCapture?) -> Void)?
     private var bracketStarted = Date()
+    /// Most recent depth map, in case the frame that starts a bracket arrives without one.
+    private var lastDepth: AVDepthData?
+    private var lastDepthTime = Date.distantPast
 
     // MARK: Setup
 
@@ -143,10 +148,19 @@ final class CameraController: NSObject, ObservableObject {
 
         let fov = Double(device.activeFormat.videoFieldOfView)
         let name = device.localizedName
+        let vd = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+        var summary = "\(name), \(vd.width)×\(vd.height), field of view \(Int(fov.rounded()))°"
+        if let df = device.activeDepthDataFormat {
+            let dd = CMVideoFormatDescriptionGetDimensions(df.formatDescription)
+            summary += ", depth \(dd.width)×\(dd.height)" + (depthOK ? "" : " (not streaming)")
+        } else {
+            summary += ", no depth format"
+        }
         DispatchQueue.main.async {
             self.hasDepth = depthOK
             self.deviceName = name
             self.horizontalFOV = fov
+            self.formatSummary = summary
         }
     }
 
@@ -189,12 +203,20 @@ final class CameraController: NSObject, ObservableObject {
     // MARK: Controls
 
     /// Zoom so the framed view matches the lens. `factor` is relative to the widest view of this camera.
-    func setZoom(_ factor: Double) {
+    /// Reports the zoom the phone actually applied and the most it allows right now, on the main queue.
+    func setZoom(_ factor: Double, completion: ((Double, Double) -> Void)? = nil) {
         sessionQueue.async {
-            guard let d = self.device else { return }
-            let z = CGFloat(max(Double(d.minAvailableVideoZoomFactor), min(Double(d.maxAvailableVideoZoomFactor), factor)))
-            guard abs(d.videoZoomFactor - z) > 0.01 else { return }
-            do { try d.lockForConfiguration(); d.videoZoomFactor = z; d.unlockForConfiguration() } catch {}
+            guard let d = self.device else {
+                DispatchQueue.main.async { completion?(1, 1) }
+                return
+            }
+            let maxZ = Double(d.maxAvailableVideoZoomFactor)
+            let z = CGFloat(max(Double(d.minAvailableVideoZoomFactor), min(maxZ, factor)))
+            if abs(d.videoZoomFactor - z) > 0.01 {
+                do { try d.lockForConfiguration(); d.videoZoomFactor = z; d.unlockForConfiguration() } catch {}
+            }
+            let applied = Double(d.videoZoomFactor)
+            DispatchQueue.main.async { completion?(applied, maxZ) }
         }
     }
 
@@ -283,7 +305,7 @@ final class CameraController: NSObject, ObservableObject {
         case .base:
             guard let copy = pb.deepCopy() else { finishBracket(); return }
             bracketFrames.append((copy, 1))
-            bracketDepth = depth
+            bracketDepth = depth ?? (Date().timeIntervalSince(lastDepthTime) < 0.5 ? lastDepth : nil)
             bracketBase = exposure
             // Three stops under: shorten the shutter first, then lower ISO.
             let target = exposure.duration * exposure.iso / 8
@@ -325,6 +347,7 @@ final class CameraController: NSObject, ObservableObject {
     }
 
     fileprivate func deliver(_ pb: CVPixelBuffer, depth: AVDepthData?, time: CMTime) {
+        if let depth { lastDepth = depth; lastDepthTime = Date() }
         let exp = exposureNow()
         handleBracket(pb, depth: depth, exposure: exp, time: time)
         sink?.camera(didOutput: pb, depth: depth, exposure: exp, time: time)

@@ -9,23 +9,43 @@ struct RollsView: View {
         NavigationStack {
             List {
                 ForEach(model.cameras) { cam in
-                    Section(cam.name) {
+                    Section {
                         if let roll = model.activeRoll(for: cam.id) {
                             NavigationLink { RollDetailView(rollID: roll.id) } label: { RollRow(roll: roll, active: true) }
                             Button(role: .destructive) { model.finishRoll(roll.id) } label: { Label("Finish roll", systemImage: "checkmark.circle") }
                         } else {
-                            Text("No roll loaded. Previewing \(model.stock(for: cam)?.name ?? "without film simulation").")
-                                .font(.footnote).foregroundStyle(Theme.dim)
+                            Picker(selection: previewBinding(cam)) {
+                                Text("No film simulation").tag("none")
+                                ForEach(FilmKind.allCases) { kind in
+                                    Section(kind.rawValue) {
+                                        ForEach(StockLibrary.all.filter { $0.kind == kind }) { s in Text(s.name).tag(s.id) }
+                                    }
+                                }
+                            } label: {
+                                Label("Preview", systemImage: "eye")
+                            }
+                            .pickerStyle(.navigationLink)
                         }
                         Button { loadFor = cam } label: { Label("Load a new roll", systemImage: "plus.circle") }
+                    } header: {
+                        Text(cam.name)
+                    } footer: {
+                        if model.activeRoll(for: cam.id) == nil {
+                            Text("With no roll loaded, the app previews this stock. \"No film simulation\" meters at the ISO set in Settings.")
+                        }
                     }
                 }
                 let past = model.rolls.filter { !$0.isActive }.reversed()
                 if !past.isEmpty {
-                    Section("Finished rolls") {
+                    Section {
                         ForEach(Array(past)) { roll in
                             NavigationLink { RollDetailView(rollID: roll.id) } label: { RollRow(roll: roll, active: false) }
+                                .swipeActions { Button(role: .destructive) { model.deleteRoll(roll.id) } label: { Label("Delete", systemImage: "trash") } }
                         }
+                    } header: {
+                        Text("Finished rolls")
+                    } footer: {
+                        Text("Swipe left on a roll to delete it.")
                     }
                 }
                 Section("Saved compositions") {
@@ -45,6 +65,20 @@ struct RollsView: View {
                 LoadRollView(cameraID: cam.id).environmentObject(model).preferredColorScheme(.dark)
             }
         }
+    }
+
+    /// The stock a camera previews when it has no roll loaded ("none" = no film simulation).
+    private func previewBinding(_ cam: CameraBody) -> Binding<String> {
+        Binding(
+            get: {
+                let id = model.cameras.first { $0.id == cam.id }?.previewStockID ?? "none"
+                return StockLibrary.stock(id) == nil ? "none" : id
+            },
+            set: { v in
+                if let i = model.cameras.firstIndex(where: { $0.id == cam.id }) { model.cameras[i].previewStockID = v }
+                model.refresh()
+            }
+        )
     }
 }
 
@@ -89,6 +123,8 @@ struct CompositionRow: View {
 
 struct RollDetailView: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmDelete = false
     let rollID: UUID
 
     var body: some View {
@@ -124,8 +160,21 @@ struct RollDetailView: View {
                 }
             }
             .navigationTitle(roll.stock?.name ?? "Roll")
+            .toolbar {
+                if !roll.isActive {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(role: .destructive) { confirmDelete = true } label: { Image(systemName: "trash") }
+                    }
+                }
+            }
+            .confirmationDialog("Delete this roll and its frame log?", isPresented: $confirmDelete, titleVisibility: .visible) {
+                Button("Delete roll", role: .destructive) {
+                    model.deleteRoll(roll.id)
+                    dismiss()
+                }
+            }
         } else {
-            Text("Roll not found")
+            Text("Roll deleted").foregroundStyle(Theme.dim)
         }
     }
 }
@@ -137,7 +186,9 @@ struct LoadRollView: View {
     @State private var stockID = "portra400"
     @State private var push = 0.0
     @State private var capacity = 36
-    @State private var previewOnly = false
+    /// The stock list opens as a pushed screen, and coming back from it fires onAppear again.
+    /// Only fill in the defaults the first time, or the pick snaps back.
+    @State private var didSetDefaults = false
 
     var body: some View {
         let cam = model.cameras.first { $0.id == cameraID } ?? model.activeCamera
@@ -171,22 +222,14 @@ struct LoadRollView: View {
                         model.loadRoll(camera: cam, stockID: stockID, push: push, capacity: capacity)
                         dismiss()
                     }
-                    Button("Preview this stock without loading a roll") {
-                        if let i = model.cameras.firstIndex(where: { $0.id == cam.id }) { model.cameras[i].previewStockID = stockID }
-                        model.refresh()
-                        dismiss()
-                    }
-                    Button("Meter without film simulation") {
-                        if let i = model.cameras.firstIndex(where: { $0.id == cam.id }) { model.cameras[i].previewStockID = "none" }
-                        model.refresh()
-                        dismiss()
-                    }
                 }
             }
             .navigationTitle("Load roll")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
             .onAppear {
+                guard !didSetDefaults else { return }
+                didSetDefaults = true
                 capacity = cam.format.defaultFrames
                 if let s = model.activeRoll(for: cam.id)?.stockID ?? StockLibrary.stock(cam.previewStockID)?.id { stockID = s }
             }

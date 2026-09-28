@@ -24,7 +24,7 @@ struct AdvisorView: View {
                 if let m = model.meterResult, let lens = model.activeLens {
                     Section {
                         LabeledContent("Light", value: ExposureMath.formatEV(m.placementEV))
-                        LabeledContent("Scene range", value: String(format: "%.1f stops%@", m.sceneRange, m.phoneClipped ? " or more" : ""))
+                        LabeledContent("Scene range", value: ExposureMath.formatStops(m.sceneRange, signed: false) + " stops" + (m.phoneClipped ? " or more" : ""))
                     } footer: {
                         Text("Range is what the phone can see; bright highlights may extend past it.")
                     }
@@ -62,9 +62,17 @@ struct AdvisorView: View {
         }
     }
 
+    /// Scores are compared in half-point steps and ties keep the library's order, so near-equal
+    /// stocks don't trade places with every small change in the light.
     private func rank(ev: Double, range: Double, clipped: Bool, lens: Lens) -> [Pick] {
-        StockLibrary.all.map { evaluate($0, ev: ev, range: range, clipped: clipped, lens: lens, body: model.activeCamera) }
-            .sorted { $0.score > $1.score }
+        var order: [String: Int] = [:]
+        for (i, s) in StockLibrary.all.enumerated() { order[s.id] = i }
+        return StockLibrary.all.map { evaluate($0, ev: ev, range: range, clipped: clipped, lens: lens, body: model.activeCamera) }
+            .sorted { a, b in
+                let sa = (a.score * 2).rounded(), sb = (b.score * 2).rounded()
+                if sa != sb { return sa > sb }
+                return (order[a.id] ?? 0) < (order[b.id] ?? 0)
+            }
     }
 
     private func evaluate(_ s: FilmStock, ev: Double, range: Double, clipped: Bool, lens: Lens, body: CameraBody) -> Pick {
@@ -74,12 +82,20 @@ struct AdvisorView: View {
         let latitude = s.highlightLimit - s.shadowLimit
         let sceneRange = range + (clipped ? 2 : 0)
         let margin = latitude - sceneRange
-        if margin >= 1 { score += 2; lines.append(String(format: "Holds the scene with %.0f stops to spare", margin)) }
-        else if margin >= 0 { score += 1; lines.append("Just holds the scene's range") }
-        else { score -= 2 + (-margin); lines.append(String(format: "Scene exceeds its range by %.1f stops", -margin)) }
+        if margin >= 1 {
+            score += 2
+            let spare = Int(margin.rounded(.down))
+            lines.append("Holds the scene with \(spare) \(spare == 1 ? "stop" : "stops") to spare")
+        } else if margin >= 0 {
+            score += 1
+            lines.append("Just holds the scene's range")
+        } else {
+            score -= 2 + (-margin)
+            lines.append("Scene is \(ExposureMath.formatStops(-margin, signed: false)) stops past its range")
+        }
         // Handheld at the widest aperture.
         let target = ev + log2(s.iso / 100)
-        let t = ExposureMath.shutter(forEV: target, aperture: lens.maxAperture)
+        let t = ExposureMath.nominalShutter(ExposureMath.shutter(forEV: target, aperture: lens.maxAperture))
         let limit = min(1.0 / 30, 1 / lens.focalLength)
         if t <= limit {
             score += 2
