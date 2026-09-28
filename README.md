@@ -21,7 +21,7 @@ SideStore installs apps with a free Apple ID and re-signs them on the phone. Eve
 
 Once:
 
-1. Install SideStore on the phone with iloader (iloader.app). That needs a Mac, or an Intel or AMD Windows PC with iTunes. Windows on ARM can't see an iPhone over USB, so there it needs the experimental WSL route.
+1. Install SideStore on the phone with iloader (iloader.app). That needs a Mac, or an Intel or AMD Windows PC with iTunes. Windows on ARM can't see an iPhone over USB, so there it needs the experimental WSL route with usbipd-win. On that route, run `tools/usbmuxd-wsl.sh` inside Ubuntu first. Stock usbmuxd hangs on large copies there, because usbipd-win drops the zero-length USB packets it relies on.
 2. On the phone, turn on Developer Mode under Settings, Privacy & Security. Then trust your Apple ID under Settings, General, VPN & Device Management.
 3. Install LocalDevVPN from the App Store and connect it.
 4. Open SideStore and sign in with the same Apple ID.

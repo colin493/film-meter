@@ -3,6 +3,9 @@ name: Build Film Meter
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "tools/**"
+      - "**.md"
   workflow_dispatch:
     inputs:
       testflight:

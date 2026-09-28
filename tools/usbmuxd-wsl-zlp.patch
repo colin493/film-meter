@@ -1,0 +1,44 @@
+--- a/src/device.c
++++ b/src/device.c
+@@ -379,7 +379,9 @@
+ 	conn->tx_win = 131072;
+ 	conn->rx_recvd = 0;
+ 	conn->flags = 0;
+-	conn->max_payload = USB_MTU - sizeof(struct mux_header) - sizeof(struct tcphdr);
++	/* One byte short of the MTU, so a full packet (49151 bytes) never ends on a USB
++	 * packet boundary and never needs a zero-length packet after it. */
++	conn->max_payload = USB_MTU - sizeof(struct mux_header) - sizeof(struct tcphdr) - 1;
+ 
+ 	conn->ob_buf = malloc(CONN_OUTBUF_SIZE);
+ 	conn->ob_capacity = CONN_OUTBUF_SIZE;
+@@ -505,12 +507,28 @@
+ 			connection_teardown(conn);
+ 			return;
+ 		}
+-		res = send_tcp(conn, TH_ACK, conn->ob_buf, size);
++		/* usbipd-win (USB passthrough into WSL) drops the zero-length packet that has
++		 * to follow a transfer ending exactly on a USB packet boundary, and the device
++		 * then waits forever. Split such data in two so neither transfer ends on a
++		 * boundary (64 covers full, high and super speed packet sizes). */
++		int mux_hdr = ((conn->dev->version < 2) ? 8 : (int)sizeof(struct mux_header)) + (int)sizeof(struct tcphdr);
++		if(size > 1 && ((mux_hdr + size) % 64) == 0) {
++			res = send_tcp(conn, TH_ACK, conn->ob_buf, size - 1);
++			if(res >= 0) {
++				conn->tx_seq += size - 1;
++				res = send_tcp(conn, TH_ACK, conn->ob_buf + size - 1, 1);
++				if(res >= 0)
++					conn->tx_seq += 1;
++			}
++		} else {
++			res = send_tcp(conn, TH_ACK, conn->ob_buf, size);
++			if(res >= 0)
++				conn->tx_seq += size;
++		}
+ 		if(res < 0) {
+ 			connection_teardown(conn);
+ 			return;
+ 		}
+-		conn->tx_seq += size;
+ 	}
+ 
+ 	update_connection(conn);
