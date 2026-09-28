@@ -116,30 +116,37 @@ enum Meter {
             memory.kind = kind
 
             placement = evPhone + base
-            var offset = 0.0   // stops the scene average should sit above middle grey
+            // The line under the reading gives one number, the adjustment the meter chose,
+            // and then why in plain words.
+            var sceneThirds = 0   // thirds the scene average should sit above middle grey
+            var why: [String] = []
             switch kind {
-            case .face, .backlitFace:
+            case .face:
                 if let face = stats.faceExposure { placement = evPhone + Double(face) - 0.67 }
-                label = kind == .face ? "Face: skin a touch above middle grey" : "Backlit face: exposed for the face"
+                why.append("metered for the face, skin a touch above middle grey")
+            case .backlitFace:
+                if let face = stats.faceExposure { placement = evPhone + Double(face) - 0.67 }
+                why.append("metered for the face, not the light behind it")
             case .backlit:
                 placement = evPhone + Double(stats.centerWeighted) - 0.3
-                label = "Backlit: exposed for the subject, not the light behind it"
+                why.append("metered for the subject, not the light behind it")
             case .snow:
-                offset = 5.0 / 3
-                label = "Snow or sand: +1⅔ to keep it white"
+                sceneThirds = 5
+                why.append("keeps snow or sand white")
             case .pale:
-                offset = 5.0 / 3
-                label = "Bright, pale scene: +1⅔ to keep it bright"
+                sceneThirds = 5
+                why.append("keeps a bright, pale scene bright")
             case .night:
-                offset = -1
-                label = "Night: −1 to keep it dark"
+                sceneThirds = -3
+                why.append("keeps the night dark")
             case .sky:
-                offset = -1.0 / 3
-                label = "Big sky: −⅓ for the sky"
+                sceneThirds = -1
+                why.append("keeps the big sky from washing out")
             case .even:
-                label = "Even light"
+                break
             }
-            placement -= offset
+            placement -= Double(sceneThirds) / 3
+            var totalThirds = sceneThirds
 
             // Fit the scene to the stock's latitude.
             if let st = stock {
@@ -157,7 +164,8 @@ enum Meter {
                     memory.shiftThirds = thirds
                     if thirds > 0 {
                         placement -= Double(thirds) / 3
-                        label += " · \(ExposureMath.formatStops(Double(thirds) / 3)) for shadow detail"
+                        totalThirds += thirds
+                        why.append("holds shadow detail, since \(st.name) has highlight room to spare")
                     }
                 } else {
                     // Slide film: give up shadows to keep highlights.
@@ -167,12 +175,18 @@ enum Meter {
                     memory.shiftThirds = thirds
                     if thirds > 0 {
                         placement += Double(thirds) / 3
-                        label += " · \(ExposureMath.formatStops(-Double(thirds) / 3)) to protect highlights"
+                        totalThirds -= thirds
+                        why.append("protects the highlights, which \(st.name) clips early")
                     }
                 }
             } else {
                 memory.shiftThirds = 0
             }
+
+            if why.isEmpty { why.append("even light, so a straight whole-scene reading") }
+            var text = why.joined(separator: " and ")
+            text = text.prefix(1).uppercased() + text.dropFirst()
+            label = totalThirds == 0 ? text : "\(ExposureMath.formatStops(Double(totalThirds) / 3)) · \(text)"
         }
 
         // Settle the reading on thirds of a stop, and only move it for a real change in the light.

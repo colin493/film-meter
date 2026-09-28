@@ -56,18 +56,6 @@ struct SettingsView: View {
                 } footer: {
                     Text("Send Claude a screenshot of this if the framing or depth looks wrong.")
                 }
-
-                Section("Stock data") {
-                    ForEach(StockLibrary.all) { s in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(s.name).font(.subheadline)
-                            Text("ISO \(Int(s.iso)) · \(s.dataSheet)").font(.caption).foregroundStyle(Theme.dim)
-                            Text(s.reciprocity.note).font(.caption2).foregroundStyle(Theme.dim)
-                            Text("Detail from \(ExposureMath.formatStops(s.shadowLimit)) to \(ExposureMath.formatStops(s.highlightLimit)) stops around middle grey (approximate).")
-                                .font(.caption2).foregroundStyle(Theme.dim)
-                        }
-                    }
-                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
